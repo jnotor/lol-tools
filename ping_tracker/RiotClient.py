@@ -1,5 +1,5 @@
+import re
 import requests
-import json
 
 class RiotClient:
     _base_url = 'https://americas.api.riotgames.com/'
@@ -12,6 +12,29 @@ class RiotClient:
         '''
         self.riot_api_key = riot_api_key
         self.puuid = self._set_player_puuid(summoner_name, tagline)
+
+    def _process_game(self, game: dict, target_key_pattern: str = '') -> dict:
+        ''' Method parses an individual game for the init'd player's specific data
+        filtering for keys matching target_key_pattern
+
+        @param game: game data
+        @param target_key_pattern: optional regex key pattern to match
+
+        :return ret: filtered player participant data
+        '''
+        # iterate over the participants until we find the init'd player's puuid.
+        # we can assume its there since we got the game using their puuid
+        target_player = [p for p in game if p['puuid'] == self.puuid][0]
+
+        ret = {}
+
+        for key, value in target_player.items():
+            tkp = re.search(target_key_pattern, key)
+
+            if target_key_pattern and tkp is not None:
+                ret[key] = value
+
+        return ret
 
     def _set_player_puuid(self, summoner_name: str, tagline: str) -> str:
         ''' Method sets the puuid for the initialized player
@@ -32,9 +55,11 @@ class RiotClient:
 
         return response.get('puuid', '')
 
-    def get_recent_game_ids(self) -> dict:
+    def get_players_recent_games_data(self, game_type: str = '', target_key_pattern: str = '') -> dict:
         ''' Method gets recent games for the initialized player
 
+        @param game_type: for optional filtering of games
+        @param target_key_pattern: optional filtering of game data based on regex pattern of keys
         :return: list of game dicts
         '''
         url = f'{self._base_url}/lol/match/v5/matches/by-puuid/{self.puuid}/ids'
@@ -49,7 +74,19 @@ class RiotClient:
         url = f'{self._base_url}lol/match/v5/matches'
         for game_id in response:
             response = requests.get(f'{url}/{game_id}?api_key={self.riot_api_key}')
-            if response.status_code == 200:
-                ret.append(response.json())
+            if response.status_code != 200:
+                continue
 
-        return response
+            game = response.json().get('info', {})
+
+            if game_type and game['gameType'] != game_type:
+                continue
+
+            processed_game = self._process_game(
+                game=game.get('participants', []),
+                target_key_pattern=f'{target_key_pattern}'
+            )
+
+            ret.append(processed_game)
+
+        return ret
